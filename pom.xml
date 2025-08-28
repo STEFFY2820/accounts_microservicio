@@ -149,12 +149,8 @@
                                 <useSpringBoot3>true</useSpringBoot3>
                                 <reactive>true</reactive>
                                 <delegatePattern>true</delegatePattern>
-                                <!-- NO pongas interfaceOnly aquí si quieres los métodos por defecto -->
                             </configOptions>
-
-                            <!-- Fuerza a generar ApiUtil -->
                             <supportingFilesToGenerate>ApiUtil.java</supportingFilesToGenerate>
-
                             <enablePostProcessFile>true</enablePostProcessFile>
                             <skipValidateSpec>false</skipValidateSpec>
                             <verbose>true</verbose>
