@@ -1,13 +1,14 @@
 package ntt.ntt_ms_accounts.service;
 
 import ntt.ntt_ms_accounts.client.CustomerClient;
-import ntt.ntt_ms_accounts.models.*;
+import ntt.ntt_ms_accounts.models.Loan;
+import ntt.ntt_ms_accounts.models.LoanStatus;
+import ntt.ntt_ms_accounts.models.LoanType;
 import ntt.ntt_ms_accounts.repository.LoanRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-
 import java.math.BigDecimal;
 import java.time.Instant;
 
@@ -44,6 +45,7 @@ public class LoanService {
     }
 
     public Mono<Loan> get(String id) { return loanRepo.findById(id); }
+
     public Flux<Loan> listByCustomer(String customerId) { return loanRepo.findByCustomerId(customerId); }
 
     public Mono<Loan> payment(String id, BigDecimal amount) {
@@ -53,10 +55,7 @@ public class LoanService {
                     BigDecimal newRemaining = ln.getRemaining().subtract(amount);
                     ln.setRemaining(newRemaining.max(BigDecimal.ZERO));
                     if (ln.getRemaining().compareTo(BigDecimal.ZERO) == 0) ln.setStatus(LoanStatus.CLOSED);
-                    // puedes recalcular nextDueDate aquí si manejas calendario de cuotas
                     return loanRepo.save(ln);
                 });
     }
-
-
 }

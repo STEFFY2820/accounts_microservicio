@@ -1,0 +1,26 @@
+openapi: 3.0.3
+info: { title: Whitelist API, version: 1.0.0 }
+paths:
+  /whitelist/{id}:
+    get:
+      operationId: getItem
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+components:
+  schemas:
+    Item:
+      type: object
+      required: [id, name]
+      properties:
+        id:   { type: string }
+        name: { type: string }
