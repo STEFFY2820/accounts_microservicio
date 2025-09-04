@@ -20,6 +20,9 @@ import java.time.LocalDateTime;
 import java.time.Clock;
 import java.time.ZoneId;
 import java.time.temporal.TemporalAdjusters;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -30,7 +33,7 @@ public class AccountService {
     private final AccountMovementRepository movementRepo;
     private final CustomerClient customerClient;
 
-    // Create account (domain only)
+    // Create account
     public Mono<Account> create(Account acc) {
         log.info("Creating account with number {}", acc.getAccountNumber());
         log.debug("Account details: {}", acc);
@@ -43,6 +46,7 @@ public class AccountService {
                                         new IllegalStateException("accountNumber already exists")))
                                 .switchIfEmpty(Mono.defer(() -> {
                                     // defaults by type
+                                    acc.setCreatedAt(Instant.now());
                                     switch (acc.getType()) {
                                         case SAVINGS -> {
                                             acc.setMaintenanceFee(BigDecimal.ZERO);
@@ -102,7 +106,7 @@ public class AccountService {
         return accountRepo.deleteById(id);
     }
 
-    // MOVEMENTS (domain only)
+    // MOVEMENTS
     public Mono<AccountMovement> deposit(String accountId, BigDecimal amount, String ref, Clock clock) {
         return operate(accountId, MovementType.DEPOSIT, amount, ref, clock);
     }
@@ -121,24 +125,49 @@ public class AccountService {
     // RULES
 
     private Mono<Void> validateAccountCreation(CustomerClient.CustomerType ct, Account acc) {
+        List<String> holders = Optional.ofNullable(acc.getHolders()).orElseGet(ArrayList::new);
+        List<String> signers = Optional.ofNullable(acc.getAuthorizedSigners()).orElseGet(ArrayList::new);
+
         if (ct == CustomerClient.CustomerType.PERSONAL) {
+            Mono<Void> partyRule = validatePersonalOwnersAndSigners(holders, signers);
+
             if (acc.getType() == AccountType.SAVINGS) {
-                return ensureNoExistingOfType(acc.getCustomerId(), AccountType.SAVINGS);
+                return partyRule.then(ensureNoExistingOfType(acc.getCustomerId(), AccountType.SAVINGS));
             }
             if (acc.getType() == AccountType.CURRENT) {
-                return ensureNoExistingOfType(acc.getCustomerId(), AccountType.CURRENT);
+                return partyRule.then(ensureNoExistingOfType(acc.getCustomerId(), AccountType.CURRENT));
             }
-            // FIXED_TERM: unlimited count
-            return Mono.empty();
+
+            if (acc.getType() == AccountType.FIXED_TERM) {
+                return partyRule;
+            }
+            return Mono.error(new IllegalStateException("unsupported account type for personal"));
         } else {
             // BUSINESS
             if (acc.getType() != AccountType.CURRENT) {
                 return Mono.error(new IllegalStateException(
                         "Business customers can only open CURRENT accounts"));
             }
-            // multiple CURRENT allowed
-            return Mono.empty();
+            return validateBusinessOwnersAndSigners(holders, signers);
         }
+    }
+
+    private Mono<Void> validatePersonalOwnersAndSigners(List<String> holders, List<String> signers) {
+        if (holders.size() != 1) {
+            return Mono.error(new IllegalStateException("personal accounts require exactly one holder"));
+        }
+        if (!signers.isEmpty()) {
+            return Mono.error(new IllegalStateException("personal accounts cannot have authorized signers"));
+        }
+        return Mono.empty();
+    }
+
+    private Mono<Void> validateBusinessOwnersAndSigners(List<String> holders, List<String> signers) {
+        if (holders == null || holders.isEmpty()) {
+            return Mono.error(new IllegalStateException("business accounts require at least one holder"));
+        }
+        // signers can be empty
+        return Mono.empty();
     }
 
     private Mono<Void> ensureNoExistingOfType(String customerId, AccountType type) {

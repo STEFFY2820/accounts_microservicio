@@ -35,6 +35,8 @@ public interface AccountMapper {
     @Mapping(target = "type",   source = "type",   qualifiedByName = "enumName")
     @Mapping(target = "status", source = "status", qualifiedByName = "enumName")
     @Mapping(target = "balance", source = "balance", qualifiedByName = "bigToStr")
+    @Mapping(target = "holders", source = "holders")
+    @Mapping(target = "authorizedSigners", source = "authorizedSigners")
     AccountResponse toResponse(Account model);
 
     // Modelo -> MovementResponse

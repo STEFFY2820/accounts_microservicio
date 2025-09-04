@@ -1,6 +1,7 @@
 package ntt.ntt_ms_accounts.dto;
 
 import java.time.Instant;
+import java.util.List;
 
 public record AccountResponse(
         String id,
@@ -9,5 +10,7 @@ public record AccountResponse(
         String balance,  // BigDecimal a string
         Instant createdAt,
         String accountNumber,
-        String status    // enum a string
+        String status,// enum a string
+        List<String> holders,
+        List<String> authorizedSigners
 ) {}

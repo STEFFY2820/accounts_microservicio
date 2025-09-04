@@ -14,6 +14,7 @@ import org.springframework.data.mongodb.core.mapping.FieldType;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 @Data @Builder @NoArgsConstructor @AllArgsConstructor
@@ -27,8 +28,12 @@ public class Account {
     private String accountNumber;
 
     private String customerId;
-    private List<String> holders;
-    private List<String> authorizedSigners;
+
+    @Builder.Default
+    private List<String> holders = new ArrayList<>();
+
+    @Builder.Default
+    private List<String> authorizedSigners = new ArrayList<>();
 
     private AccountType type;
     private AccountStatus status;
