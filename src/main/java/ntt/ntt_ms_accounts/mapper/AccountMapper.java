@@ -37,6 +37,9 @@ public interface AccountMapper {
     @Mapping(target = "balance", source = "balance", qualifiedByName = "bigToStr")
     @Mapping(target = "holders", source = "holders")
     @Mapping(target = "authorizedSigners", source = "authorizedSigners")
+    @Mapping(target = "maintenanceFee")
+    @Mapping(target = "monthlyMovementLimit")
+    @Mapping(target = "fixedDayAllowed")
     AccountResponse toResponse(Account model);
 
     // Modelo -> MovementResponse

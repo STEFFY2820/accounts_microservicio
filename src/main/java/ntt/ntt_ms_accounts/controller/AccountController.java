@@ -25,6 +25,11 @@ public class AccountController {
     private final AccountService accountService;
     private final AccountMapper mapper;
 
+    @PostMapping("/tst")
+    public Mono<AccountResponse> createTest(@RequestBody @Valid OpenAccountRequest req) {
+        return accountService.createFromRequest(req).map(mapper::toResponse);
+    }
+
     @Operation(summary = "Open new account")
     @ResponseStatus(HttpStatus.CREATED)
     @PostMapping

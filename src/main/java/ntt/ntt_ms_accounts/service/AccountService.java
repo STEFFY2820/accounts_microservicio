@@ -2,6 +2,7 @@ package ntt.ntt_ms_accounts.service;
 
 import lombok.RequiredArgsConstructor;
 import ntt.ntt_ms_accounts.client.CustomerClient;
+import ntt.ntt_ms_accounts.dto.OpenAccountRequest;
 import ntt.ntt_ms_accounts.models.Account;
 import ntt.ntt_ms_accounts.models.AccountMovement;
 import ntt.ntt_ms_accounts.models.AccountStatus;
@@ -9,6 +10,7 @@ import ntt.ntt_ms_accounts.models.MovementType;
 import ntt.ntt_ms_accounts.models.AccountType;
 import ntt.ntt_ms_accounts.repository.AccountMovementRepository;
 import ntt.ntt_ms_accounts.repository.AccountRepository;
+import ntt.ntt_ms_accounts.mapper.AccountMapper;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -23,6 +25,8 @@ import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 @Slf4j
 @Service
@@ -32,6 +36,50 @@ public class AccountService {
     private final AccountRepository accountRepo;
     private final AccountMovementRepository movementRepo;
     private final CustomerClient customerClient;
+    private final AccountMapper mapper;
+
+
+    public Mono<Account> createFromRequest(OpenAccountRequest req) {
+        Account acc = mapper.toModel(req);
+
+        CustomerClient.CustomerType ct =
+                CustomerClient.CustomerType.valueOf(req.customerType().name());
+
+        return validateAccountCreation(ct, acc)
+                .then(
+                        accountRepo.findByAccountNumber(acc.getAccountNumber())
+                                .flatMap(a -> Mono.<Account>error(
+                                        new ResponseStatusException(HttpStatus.BAD_REQUEST, "accountNumber already exists")))
+                                .switchIfEmpty(Mono.defer(() -> {
+                                    acc.setCreatedAt(java.time.Instant.now());
+                                    switch (acc.getType()) {
+                                        case SAVINGS -> {
+                                            acc.setMaintenanceFee(java.math.BigDecimal.ZERO);
+                                            if (acc.getMonthlyMovementLimit()==null || acc.getMonthlyMovementLimit()<=0)
+                                                acc.setMonthlyMovementLimit(10);
+                                            acc.setFixedDayAllowed(null);
+                                        }
+                                        case CURRENT -> {
+                                            if (acc.getMaintenanceFee()==null
+                                                    || acc.getMaintenanceFee().compareTo(java.math.BigDecimal.ZERO) <= 0)
+                                                acc.setMaintenanceFee(new java.math.BigDecimal("5.00"));
+                                            acc.setMonthlyMovementLimit(0);
+                                            acc.setFixedDayAllowed(null);
+                                        }
+                                        case FIXED_TERM -> {
+                                            acc.setMaintenanceFee(java.math.BigDecimal.ZERO);
+                                            acc.setMonthlyMovementLimit(1);
+                                            if (acc.getFixedDayAllowed()==null) acc.setFixedDayAllowed(25);
+                                        }
+                                    }
+                                    if (acc.getBalance()==null) acc.setBalance(java.math.BigDecimal.ZERO);
+                                    if (acc.getStatus()==null)  acc.setStatus(AccountStatus.ACTIVE);
+                                    return accountRepo.save(acc);
+                                }))
+                                .cast(Account.class)
+                );
+    }
+
 
     // Create account
     public Mono<Account> create(Account acc) {
@@ -61,8 +109,7 @@ public class AccountService {
                                                     || acc.getMaintenanceFee().compareTo(BigDecimal.ZERO) <= 0) {
                                                 acc.setMaintenanceFee(new BigDecimal("5.00"));
                                             }
-                                            // always for CURRENT
-                                            acc.setMonthlyMovementLimit(null);
+                                            acc.setMonthlyMovementLimit(0);
                                             acc.setFixedDayAllowed(null);
                                         }
                                         case FIXED_TERM -> {
@@ -72,7 +119,6 @@ public class AccountService {
                                                 acc.setFixedDayAllowed(25); // default day
                                             }
                                         }
-                                        default -> { /* no-op */ }
                                     }
 
                                     if (acc.getBalance() == null) {
@@ -129,6 +175,7 @@ public class AccountService {
         List<String> signers = Optional.ofNullable(acc.getAuthorizedSigners()).orElseGet(ArrayList::new);
 
         if (ct == CustomerClient.CustomerType.PERSONAL) {
+            System.out.println("Reconoció PERSONAL");
             Mono<Void> partyRule = validatePersonalOwnersAndSigners(holders, signers);
 
             if (acc.getType() == AccountType.SAVINGS) {
@@ -141,16 +188,20 @@ public class AccountService {
             if (acc.getType() == AccountType.FIXED_TERM) {
                 return partyRule;
             }
-            return Mono.error(new IllegalStateException("unsupported account type for personal"));
-        } else {
-            // BUSINESS
+            return Mono.error(new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "unsupported account type for personal"));
+        }
+        if (ct == CustomerClient.CustomerType.BUSINESS) {
+            System.out.println("Reconoció Bussiness");
             if (acc.getType() != AccountType.CURRENT) {
-                return Mono.error(new IllegalStateException(
-                        "Business customers can only open CURRENT accounts"));
+                return Mono.error(new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST, "Business customers can only open CURRENT accounts"));
             }
             return validateBusinessOwnersAndSigners(holders, signers);
+            }
+            return Mono.error(new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "unsupported customer type"));
         }
-    }
 
     private Mono<Void> validatePersonalOwnersAndSigners(List<String> holders, List<String> signers) {
         if (holders.size() != 1) {
