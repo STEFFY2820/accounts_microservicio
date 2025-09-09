@@ -8,7 +8,7 @@ public record AccountResponse(
         String id,
         String customerId,
         String type,     // enum a string
-        String balance,  // BigDecimal a string
+        BigDecimal balance,  // BigDecimal a string
         Instant createdAt,
         String accountNumber,
         String status,// enum a string

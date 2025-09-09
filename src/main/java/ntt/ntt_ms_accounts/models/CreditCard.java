@@ -23,7 +23,7 @@ public class CreditCard {
     @Indexed(unique = true)
     private String cardNumber;
 
-    private String customerId;    // persona o empresa
+    private String customerId;
     private CardType type;        // PERSONAL | BUSINESS
     private CardStatus status;    // ACTIVE | BLOCKED | CANCELED
 

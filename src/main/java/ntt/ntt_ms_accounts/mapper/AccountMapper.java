@@ -10,11 +10,14 @@ import ntt.ntt_ms_accounts.models.AccountType;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.Named;
-import org.mapstruct.AfterMapping;
 import org.mapstruct.MappingTarget;
+import java.util.Optional;
+import java.util.Objects;
 
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
 @Mapper(componentModel = "spring")
 public interface AccountMapper {
@@ -22,8 +25,6 @@ public interface AccountMapper {
     // Request DTO -> Modelo
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "status", constant = "ACTIVE")
-    @Mapping(target = "type", qualifiedByName = "toAccountType")
-    @Mapping(target = "balance", ignore = true)
     @Mapping(target = "maintenanceFee", ignore = true)
     @Mapping(target = "monthlyMovementLimit", ignore = true)
     @Mapping(target = "fixedDayAllowed", ignore = true)
@@ -70,9 +71,12 @@ public interface AccountMapper {
         return AccountType.valueOf(value.trim().toUpperCase());
     }
 
-    @AfterMapping
-    default void defaultBalanceIfNull(@MappingTarget Account a, OpenAccountRequest dto) {
-        if (a.getBalance() == null)
-        {a.setBalance(BigDecimal.ZERO);}
+    default void normalizeLists(OpenAccountRequest dto, @MappingTarget Account acc) {
+        var holders = Optional.ofNullable(dto.holders()).orElseGet(List::of)
+                .stream().filter(Objects::nonNull).distinct().toList();
+        var signers = Optional.ofNullable(dto.authorizedSigners()).orElseGet(List::of)
+                .stream().filter(Objects::nonNull).distinct().toList();
+        acc.setHolders(new ArrayList<>(holders));
+        acc.setAuthorizedSigners(new ArrayList<>(signers));
     }
 }

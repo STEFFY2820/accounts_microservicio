@@ -45,7 +45,8 @@ public class Account {
     private BigDecimal maintenanceFee;
     private Integer monthlyMovementLimit;
     private Integer fixedDayAllowed;
-
+    @Field(targetType = FieldType.DECIMAL128)
+    private BigDecimal requiredAvgDailyBalance;
     @CreatedDate
     private Instant createdAt;
     @LastModifiedDate

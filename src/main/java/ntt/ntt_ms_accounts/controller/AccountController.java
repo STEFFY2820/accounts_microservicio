@@ -11,8 +11,15 @@ import ntt.ntt_ms_accounts.dto.BalanceResponse;
 import ntt.ntt_ms_accounts.service.AccountService;
 import ntt.ntt_ms_accounts.mapper.AccountMapper;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.*;
-
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import java.time.Instant;
@@ -24,11 +31,6 @@ public class AccountController {
 
     private final AccountService accountService;
     private final AccountMapper mapper;
-
-    @PostMapping("/tst")
-    public Mono<AccountResponse> createTest(@RequestBody @Valid OpenAccountRequest req) {
-        return accountService.createFromRequest(req).map(mapper::toResponse);
-    }
 
     @Operation(summary = "Open new account")
     @ResponseStatus(HttpStatus.CREATED)

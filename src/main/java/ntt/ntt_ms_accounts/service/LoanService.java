@@ -4,6 +4,7 @@ import ntt.ntt_ms_accounts.client.CustomerClient;
 import ntt.ntt_ms_accounts.models.Loan;
 import ntt.ntt_ms_accounts.models.LoanStatus;
 import ntt.ntt_ms_accounts.models.LoanType;
+import ntt.ntt_ms_accounts.models.CustomerType;
 import ntt.ntt_ms_accounts.repository.LoanRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -24,24 +25,30 @@ public class LoanService {
         if (loan.getDisbursementDate() == null) loan.setDisbursementDate(Instant.now());
         if (loan.getRemaining() == null) loan.setRemaining(loan.getPrincipal());
 
-        return customerClient.getCustomerType(loan.getCustomerId())
-                .flatMap(ct -> {
-                    if (loan.getType() == LoanType.PERSONAL && ct != CustomerClient.CustomerType.PERSONAL) {
-                        return Mono.error(new IllegalStateException("Personal loan must belong to a personal customer"));
+        return customerClient.getCustomer(loan.getCustomerId())
+                .switchIfEmpty(Mono.error(new IllegalArgumentException("Customer not found")))
+                .flatMap(cust -> { CustomerType ct = cust.type();
+                    if (loan.getType() == LoanType.PERSONAL && ct != CustomerType.PERSONAL) {
+                        return Mono.<Loan>error(new IllegalStateException("Personal loan must belong to a PERSONAL customer")); }
+                    if (loan.getType() == LoanType.BUSINESS && ct != CustomerType.BUSINESS) {
+                        return Mono.<Loan>error(new IllegalStateException("Business loan must belong to a business customer"));
                     }
-                    if (loan.getType() == LoanType.BUSINESS && ct != CustomerClient.CustomerType.BUSINESS) {
-                        return Mono.error(new IllegalStateException("Business loan must belong to a business customer"));
+                    switch (loan.getType()) {
+                        case PERSONAL:
+                            return loanRepo.countByCustomerIdAndType(loan.getCustomerId(), LoanType.PERSONAL)
+                                    .flatMap(cnt -> (cnt > 0)
+                                            ? Mono.<Loan>error(new IllegalStateException(
+                                            "Customer already has a PERSONAL loan"))
+                                            : loanRepo.save(loan));
+
+                        case BUSINESS:
+                            return loanRepo.save(loan);
+
+                        default:
+                            return Mono.error(new IllegalStateException(
+                                    "Unsupported loan type: " + loan.getType()));
                     }
-                    return Mono.empty();
-                })
-                .then(
-                        loan.getType() == LoanType.PERSONAL
-                                ? loanRepo.countByCustomerIdAndType(loan.getCustomerId(), LoanType.PERSONAL)
-                                .flatMap(cnt -> cnt > 0
-                                        ? Mono.error(new IllegalStateException("Customer already has a PERSONAL loan"))
-                                        : loanRepo.save(loan))
-                                : loanRepo.save(loan) // BUSINESS: N permitidos
-                );
+        });
     }
 
     public Mono<Loan> get(String id) { return loanRepo.findById(id); }

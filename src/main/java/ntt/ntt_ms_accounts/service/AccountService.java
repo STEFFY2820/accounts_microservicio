@@ -2,15 +2,15 @@ package ntt.ntt_ms_accounts.service;
 
 import lombok.RequiredArgsConstructor;
 import ntt.ntt_ms_accounts.client.CustomerClient;
-import ntt.ntt_ms_accounts.dto.OpenAccountRequest;
 import ntt.ntt_ms_accounts.models.Account;
 import ntt.ntt_ms_accounts.models.AccountMovement;
 import ntt.ntt_ms_accounts.models.AccountStatus;
 import ntt.ntt_ms_accounts.models.MovementType;
 import ntt.ntt_ms_accounts.models.AccountType;
+import ntt.ntt_ms_accounts.models.CustomerSubType;
+import ntt.ntt_ms_accounts.models.CustomerType;
 import ntt.ntt_ms_accounts.repository.AccountMovementRepository;
 import ntt.ntt_ms_accounts.repository.AccountRepository;
-import ntt.ntt_ms_accounts.mapper.AccountMapper;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -25,8 +25,8 @@ import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
+import java.util.Objects;
+
 
 @Slf4j
 @Service
@@ -36,102 +36,86 @@ public class AccountService {
     private final AccountRepository accountRepo;
     private final AccountMovementRepository movementRepo;
     private final CustomerClient customerClient;
-    private final AccountMapper mapper;
-
-
-    public Mono<Account> createFromRequest(OpenAccountRequest req) {
-        Account acc = mapper.toModel(req);
-
-        CustomerClient.CustomerType ct =
-                CustomerClient.CustomerType.valueOf(req.customerType().name());
-
-        return validateAccountCreation(ct, acc)
-                .then(
-                        accountRepo.findByAccountNumber(acc.getAccountNumber())
-                                .flatMap(a -> Mono.<Account>error(
-                                        new ResponseStatusException(HttpStatus.BAD_REQUEST, "accountNumber already exists")))
-                                .switchIfEmpty(Mono.defer(() -> {
-                                    acc.setCreatedAt(java.time.Instant.now());
-                                    switch (acc.getType()) {
-                                        case SAVINGS -> {
-                                            acc.setMaintenanceFee(java.math.BigDecimal.ZERO);
-                                            if (acc.getMonthlyMovementLimit()==null || acc.getMonthlyMovementLimit()<=0)
-                                                acc.setMonthlyMovementLimit(10);
-                                            acc.setFixedDayAllowed(null);
-                                        }
-                                        case CURRENT -> {
-                                            if (acc.getMaintenanceFee()==null
-                                                    || acc.getMaintenanceFee().compareTo(java.math.BigDecimal.ZERO) <= 0)
-                                                acc.setMaintenanceFee(new java.math.BigDecimal("5.00"));
-                                            acc.setMonthlyMovementLimit(0);
-                                            acc.setFixedDayAllowed(null);
-                                        }
-                                        case FIXED_TERM -> {
-                                            acc.setMaintenanceFee(java.math.BigDecimal.ZERO);
-                                            acc.setMonthlyMovementLimit(1);
-                                            if (acc.getFixedDayAllowed()==null) acc.setFixedDayAllowed(25);
-                                        }
-                                    }
-                                    if (acc.getBalance()==null) acc.setBalance(java.math.BigDecimal.ZERO);
-                                    if (acc.getStatus()==null)  acc.setStatus(AccountStatus.ACTIVE);
-                                    return accountRepo.save(acc);
-                                }))
-                                .cast(Account.class)
-                );
-    }
-
 
     // Create account
     public Mono<Account> create(Account acc) {
         log.info("Creating account with number {}", acc.getAccountNumber());
         log.debug("Account details: {}", acc);
 
-        return customerClient.getCustomerType(acc.getCustomerId())
-                .flatMap(ct -> validateAccountCreation(ct, acc))
-                .then(
-                        accountRepo.findByAccountNumber(acc.getAccountNumber())
-                                .flatMap(a -> Mono.<Account>error(
-                                        new IllegalStateException("accountNumber already exists")))
-                                .switchIfEmpty(Mono.defer(() -> {
-                                    // defaults by type
-                                    acc.setCreatedAt(Instant.now());
-                                    switch (acc.getType()) {
-                                        case SAVINGS -> {
-                                            acc.setMaintenanceFee(BigDecimal.ZERO);
-                                            if (acc.getMonthlyMovementLimit() == null
-                                                    || acc.getMonthlyMovementLimit() <= 0) {
-                                                acc.setMonthlyMovementLimit(10); // default
-                                            }
-                                            acc.setFixedDayAllowed(null);
-                                        }
-                                        case CURRENT -> {
-                                            if (acc.getMaintenanceFee() == null
-                                                    || acc.getMaintenanceFee().compareTo(BigDecimal.ZERO) <= 0) {
-                                                acc.setMaintenanceFee(new BigDecimal("5.00"));
-                                            }
-                                            acc.setMonthlyMovementLimit(0);
-                                            acc.setFixedDayAllowed(null);
-                                        }
-                                        case FIXED_TERM -> {
-                                            acc.setMaintenanceFee(BigDecimal.ZERO);
-                                            acc.setMonthlyMovementLimit(1);
-                                            if (acc.getFixedDayAllowed() == null) {
-                                                acc.setFixedDayAllowed(25); // default day
-                                            }
-                                        }
-                                    }
-
-                                    if (acc.getBalance() == null) {
-                                        acc.setBalance(BigDecimal.ZERO);
-                                    }
-                                    if (acc.getStatus() == null) {
-                                        acc.setStatus(AccountStatus.ACTIVE);
-                                    }
-                                    return accountRepo.save(acc);
-                                }))
-                                .cast(Account.class)
+        return customerClient.getCustomer(acc.getCustomerId())
+                .switchIfEmpty(Mono.error(new IllegalArgumentException("Customer not found")))
+                // 1) Reglas por tipo (PERSONAL/BUSINESS)
+                .flatMap(cust -> validateAccountCreation(cust.type(), acc)
+                        // 2) Reglas por subtipo (VIP / PYME)
+                        .then(applySubtypeRules(cust.subType(), acc))
+                )
+                // 3) Unicidad de accountNumber y guardado con defaults por tipo
+                .then(accountRepo.findByAccountNumber(acc.getAccountNumber())
+                        .flatMap(a -> Mono.<Account>error(new IllegalStateException("accountNumber already exists")))
+                        .switchIfEmpty(Mono.defer(() -> {
+                            // defaults por tipo de cuenta
+                            applyTypeDefaults(acc);
+                            if (acc.getStatus() == null) acc.setStatus(AccountStatus.ACTIVE);
+                            if (acc.getCreatedAt() == null) acc.setCreatedAt(Instant.now());
+                            return accountRepo.save(acc);
+                        }))
+                        .cast(Account.class)
                 );
     }
+
+    private Mono<Void> applySubtypeRules(CustomerSubType subType, Account acc) {
+        return switch (subType) {
+            case PERSONAL_VIP -> {
+                // VIP: solo permite cuenta de AHORRO (SAVINGS)
+                if (acc.getType() != AccountType.SAVINGS) {
+                    yield Mono.<Void>error(new IllegalStateException(
+                            "PERSONAL_VIP only allowed to open SAVINGS accounts"));
+                }
+                // Validar tarjeta de crédito vigente o promedio diario mínimo
+                yield Mono.<Void>empty();
+            }
+            case BUSINESS_PYME -> {
+                // PYME: solo cuenta CORRIENTE y sin comisión de mantenimiento
+                if (acc.getType() != AccountType.CURRENT) {
+                    yield Mono.<Void>error(new IllegalStateException(
+                            "BUSINESS_PYME only allowed to open CURRENT accounts"));
+                }
+                acc.setMaintenanceFee(BigDecimal.ZERO);
+                yield Mono.<Void>empty();
+            }
+            // STANDARD (o cualquier otro) → sin reglas adicionales
+            default -> Mono.<Void>empty();
+        };
+    }
+
+    private void applyTypeDefaults(Account acc) {
+        switch (acc.getType()) {
+            case SAVINGS -> {
+                // Ahorro: sin mantenimiento; límite de movimientos por defecto
+                acc.setMaintenanceFee(BigDecimal.ZERO);
+                if (acc.getMonthlyMovementLimit() == null || acc.getMonthlyMovementLimit() <= 0) {
+                    acc.setMonthlyMovementLimit(10);
+                }
+                acc.setFixedDayAllowed(null);
+            }
+            case CURRENT -> {
+                // Corriente: si no lo fijó (ej. PYME=0), poner default
+                if (acc.getMaintenanceFee() == null) {
+                    acc.setMaintenanceFee(new BigDecimal("5.00"));
+                }
+                // Sin límite mensual → usa null
+                acc.setMonthlyMovementLimit(null);
+                acc.setFixedDayAllowed(null);
+            }
+            case FIXED_TERM -> {
+                // Plazo fijo: sin mantenimiento; 1 movimiento; día fijo
+                acc.setMaintenanceFee(BigDecimal.ZERO);
+                if (acc.getMonthlyMovementLimit() == null) acc.setMonthlyMovementLimit(1);
+                if (acc.getFixedDayAllowed() == null) acc.setFixedDayAllowed(25);
+            }
+        }
+    }
+
 
     public Flux<Account> getAccounts() {
         return accountRepo.findAll();
@@ -170,54 +154,66 @@ public class AccountService {
 
     // RULES
 
-    private Mono<Void> validateAccountCreation(CustomerClient.CustomerType ct, Account acc) {
+    private Mono<Void> validateAccountCreation(CustomerType  ct, Account acc) {
+        log.debug("Validating account creation for customerId={}, type={}", acc.getCustomerId(), acc.getType());
+
+        if (acc.getCustomerId() == null || acc.getCustomerId().isBlank()) {
+            return Mono.error(new IllegalArgumentException("customerId is required"));
+        }
+        if (acc.getType() == null) {
+            return Mono.error(new IllegalArgumentException("account type is required"));
+        }
+
+        if (acc.getBalance() != null && acc.getBalance().compareTo(BigDecimal.ZERO) < 0) {
+            return Mono.error(new IllegalArgumentException("opening balance cannot be negative"));
+        }
+
         List<String> holders = Optional.ofNullable(acc.getHolders()).orElseGet(ArrayList::new);
         List<String> signers = Optional.ofNullable(acc.getAuthorizedSigners()).orElseGet(ArrayList::new);
+        holders = holders.stream().filter(Objects::nonNull).distinct().toList();
+        signers = signers.stream().filter(Objects::nonNull).distinct().toList();
+        acc.setHolders(new ArrayList<>(holders));
+        acc.setAuthorizedSigners(new ArrayList<>(signers));
 
-        if (ct == CustomerClient.CustomerType.PERSONAL) {
-            System.out.println("Reconoció PERSONAL");
-            Mono<Void> partyRule = validatePersonalOwnersAndSigners(holders, signers);
 
-            if (acc.getType() == AccountType.SAVINGS) {
-                return partyRule.then(ensureNoExistingOfType(acc.getCustomerId(), AccountType.SAVINGS));
-            }
-            if (acc.getType() == AccountType.CURRENT) {
-                return partyRule.then(ensureNoExistingOfType(acc.getCustomerId(), AccountType.CURRENT));
+        return switch (ct) {
+            case PERSONAL -> validatePersonalOwnersAndSigners(acc.getCustomerId(), holders, signers)
+                    .then(switch (acc.getType()) {
+                        case SAVINGS  -> ensureNoExistingOfType(acc.getCustomerId(), AccountType.SAVINGS);
+                        case CURRENT  -> ensureNoExistingOfType(acc.getCustomerId(), AccountType.CURRENT);
+                        case FIXED_TERM -> Mono.<Void>empty();
+                    });
+
+            case BUSINESS -> {
+                if (acc.getType() != AccountType.CURRENT) {
+                    yield Mono.error(new IllegalStateException("Business customers can only open CURRENT accounts"));
+                }
+                yield validateBusinessOwnersAndSigners(acc.getCustomerId(), holders, signers);
             }
 
-            if (acc.getType() == AccountType.FIXED_TERM) {
-                return partyRule;
-            }
-            return Mono.error(new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST, "unsupported account type for personal"));
+
+        };
+    }
+
+    private Mono<Void> validatePersonalOwnersAndSigners(String customerId,List<String> holders, List<String> signers) {
+        if (holders.isEmpty() || !holders.contains(customerId)) {
+            return Mono.error(new IllegalArgumentException("For PERSONAL, holders must include the customerId"));
         }
-        if (ct == CustomerClient.CustomerType.BUSINESS) {
-            System.out.println("Reconoció Bussiness");
-            if (acc.getType() != AccountType.CURRENT) {
-                return Mono.error(new ResponseStatusException(
-                        HttpStatus.BAD_REQUEST, "Business customers can only open CURRENT accounts"));
-            }
-            return validateBusinessOwnersAndSigners(holders, signers);
-            }
-            return Mono.error(new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST, "unsupported customer type"));
-        }
-
-    private Mono<Void> validatePersonalOwnersAndSigners(List<String> holders, List<String> signers) {
-        if (holders.size() != 1) {
-            return Mono.error(new IllegalStateException("personal accounts require exactly one holder"));
-        }
-        if (!signers.isEmpty()) {
-            return Mono.error(new IllegalStateException("personal accounts cannot have authorized signers"));
+        boolean overlap = holders.stream().anyMatch(signers::contains);
+        if (overlap) {
+            return Mono.error(new IllegalArgumentException("A holder cannot be also an authorized signer"));
         }
         return Mono.empty();
     }
 
-    private Mono<Void> validateBusinessOwnersAndSigners(List<String> holders, List<String> signers) {
-        if (holders == null || holders.isEmpty()) {
-            return Mono.error(new IllegalStateException("business accounts require at least one holder"));
+    private Mono<Void> validateBusinessOwnersAndSigners(String customerId,List<String> holders, List<String> signers) {
+        if (holders.isEmpty()) {
+            return Mono.error(new IllegalArgumentException("For BUSINESS, at least one holder is required"));
         }
-        // signers can be empty
+        if (!holders.contains(customerId)) {
+            return Mono.error(new IllegalArgumentException("For BUSINESS, holders must include the company customerId"));
+        }
+
         return Mono.empty();
     }
 
