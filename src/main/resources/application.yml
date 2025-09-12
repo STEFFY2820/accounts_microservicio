@@ -1,0 +1,8 @@
+spring:
+  application:
+    name: ntt-ms-accounts
+  config:
+    import: optional:configserver:http://localhost:9999
+
+server:
+   port: 8080
